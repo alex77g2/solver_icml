@@ -35,18 +35,18 @@ python mnistBenchmark.py -o p2m -n C -b 32 -s 123 -e 50
 python mnistBenchmark.py -o adam -n 100 -b 256 -s 123 -e 10
 
 # network+dataset (-n ..)
-M = MNIST(10)
-F = MNIST-Fashion
-C = CIFAR10+ResNet18
-C34 = CIFAR10+ResNet34
-W = CIFAR10+WideResNet28-10
-100 = CIFAR100+ResNet18
+M = MNIST(10), 
+F = MNIST-Fashion, 
+C = CIFAR10+ResNet18, 
+C34 = CIFAR10+ResNet34, 
+W = CIFAR10+WideResNet28-10, 
+100 = CIFAR100+ResNet18, 
 I = TinyImageNet200+ResNet50 (default batchsize=8) [implementation issue with adam + lion]
 
 # optimizer (-o ..)
-c2m (bs=24, or 256 for CIRAR-100)
-p2m (bs=32, or 48 for CIRAR-100)
-adam lion (bs=256)
+c2m (bs=24, or 256 for CIRAR-100),
+p2m (bs=32, or 48 for CIRAR-100),
+adam lion (bs=256),
 (for batchsize also see article)
 
 # EOF.
