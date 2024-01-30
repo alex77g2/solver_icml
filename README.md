@@ -22,8 +22,11 @@ Algorithm-Core: lib_grad_solve.py
 Tested under Windows-10 and Ubuntu-22.04 with Python 3.11 and PyTorch-2.1 and (optional) Cuda-12.3 on RTX-4070.
 
 ## Usage
-# run C2Min, seed=1, epochs=20, net=MNIST+TinyNet
-python mnistBenchmark.py -o c2m -s 1 -e 20 -n M
+# run C2Min, seed=123, epochs=20, net=MNIST+TinyNet
+python mnistBenchmark.py -o c2m -s 123 -e 20 -n M
+
+CAUTION: as we internaly use a dataset cache for small datasets (MNIST*, CIFAR*) it is recommended to delete these files when changing used datasets (-n parameter).
+"delete/rm ds_*.pt"
 
 # run P2Min, seed=123, epochs=10, net=CIFAR+ResNet18
 python mnistBenchmark.py -o p2m -s 123 -e 10 -n C
