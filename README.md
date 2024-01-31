@@ -27,7 +27,7 @@ Tested under Windows-10 and Ubuntu-22.04 with Python 3.11 and PyTorch-2.1 and (o
 Hint: such small batchsize will only work for C2M and P2M! For Adam + Lion larger use higher values (e.g. 256).
 
 CAUTION: as we internaly use a dataset cache for small datasets (MNIST*, CIFAR*) it is recommended to delete these files when changing used datasets (-n parameter).
-"delete/rm ds_*.pt"
+`delete/rm ds_*.pt`
 
 # run P2Min, seed=123, epochs=50, net=CIFAR10+ResNet18
 `python mnistBenchmark.py -o p2m -n C -b 32 -s 123 -e 50`
