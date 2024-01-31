@@ -41,7 +41,7 @@ C = CIFAR10+ResNet18,
 C34 = CIFAR10+ResNet34, 
 W = CIFAR10+WideResNet28-10, 
 100 = CIFAR100+ResNet18, 
-I = TinyImageNet200+ResNet50 (default batchsize=8) [implementation issue with adam + lion]
+I = TinyImageNet200+ResNet50 (default batchsize=8) [implementation issue with Adam + Lion on TinyImgNet due to GPU-memory]
 
 # optimizer (-o ..)
 c2m (bs=24, or 256 for CIRAR-100),
