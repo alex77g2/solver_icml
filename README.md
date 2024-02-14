@@ -7,10 +7,10 @@ This Python code is intended to be able to reproduce the results of ELRA optimiz
 ## Authors
 Date: 30th Jan. 2024, 
 --------
-(et al.)
+hidden (et al.)
 
 ## License
-Copyright = none now.
+Copyright = CC BY-SA. This source code is part of a optimizer algorithm review process in year 2024.
 
 ## Structure
 Main-File: mnistBenchmark.py, 
