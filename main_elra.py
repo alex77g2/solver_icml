@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import torch.cuda as cuda
 from torch.utils.data import TensorDataset, Subset, DataLoader
 from Cos2MinTorchFunctionOptimizer import ElraOptimizer # ELRA_class.py (tbd 2024)
-from autoaugment import CIFAR10Policy
+# from autoaugment import CIFAR10Policy
 
 # from torchvision.transforms import v2 # beta-warning (and slow)
 #from torch.profiler import profile, record_function, ProfilerActivity
