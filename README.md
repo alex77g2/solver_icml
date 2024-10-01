@@ -22,7 +22,7 @@ Algorithm-Core: lib_grad_solve.py
 Tested under Windows-10 and Ubuntu-24.04 with Python 3.12 and PyTorch-2.4 and (optional) Cuda-12.4 on RTX-4070.
 
 ## Usage
-# run C2Min, seed=123, epochs=20, net=MNIST+TinyNet
+# run ELRA, seed=123, epochs=20, net=MNIST+TinyNet
 `python main_elra.py -o elra -n M -b 32 -s 123 -e 20`
 Hint: such small batchsize will only work for C2M and P2M! For Adam + Lion use larger values (e.g. 256).
 
