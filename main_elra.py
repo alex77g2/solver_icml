@@ -1,5 +1,5 @@
 # main_elra.py (2024)
-# was: mnistBenchmark.py (for ICML 2024)
+# was: mnistBenchmark.py
 
 from time import time as time_time # shrink function table
 # import numpy as np
