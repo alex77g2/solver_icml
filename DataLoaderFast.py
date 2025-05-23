@@ -4,19 +4,35 @@
 import numpy as np # only: class DataLdrFast
 import torch as tt
 from torch.utils.data import DataLoader # TensorDataset
+from torch import zeros, get_default_dtype, uint8
+device_cpu: tt.device = tt.device('cpu')
 
+def data2gen(data:DataLoader, max_byte:int) -> None:
+    "yield dataloader into tuples"
+    byte: int = 0
+    dtx, dty = tt.bfloat16, tt.int16
+    for X, y in data:
+        y = y.to(dtype=dty, copy=True)
+        if byte <= max_byte:
+            yield (X.to(dtype=dtx, copy=True), y)
+        else:
+            yield (None, y)
+        byte += X.numel() * X.element_size()
+    return
 
 class DataLdrFast:
     dlf_Instances: int = 0
-    # dlf_Xsize: tt.Tensor = tt.zeros([0], dtype=tt.int32) # X.size(0) = 1..BatchSize
+    # dlf_Xsize: tt.Tensor = zeros([0], dtype=tt.int32) # X.size(0) = 1..BatchSize
 
     def InitVectors(self) -> None:
         self.dlf_samples = 0
         self.dlf_RandomPos: np.ndarray = np.zeros(0, dtype=np.uint16) # numpy.random.shuffle()
-        self.dlf_Images: tt.Tensor = tt.zeros([0,0,0,0], dtype=self.dlf_ImgType)
-        self.dlf_Labels: tt.Tensor = tt.zeros([0], dtype=tt.uint8)
-        self.dlf_LastTmp: tt.Tensor = tt.zeros([0], dtype=tt.get_default_dtype()) # last batch (if smaller + training)
-        self.dlf_LastLab: tt.Tensor = tt.zeros([0], dtype=tt.uint8)
+        self.SplitBS = 0
+        self.SplitZip = None
+        self.dlf_Images: tt.Tensor = zeros([0,0,0,0], dtype=self.dlf_ImgType)
+        self.dlf_Labels: tt.Tensor = zeros([0], dtype=uint8)
+        self.dlf_LastTmp: tt.Tensor = zeros([0], dtype=get_default_dtype()) # last batch (if smaller + training)
+        self.dlf_LastLab: tt.Tensor = zeros([0], dtype=uint8)
         return
 
     def __init__(self):
@@ -37,7 +53,9 @@ class DataLdrFast:
         self.dlf_is_train: bool = False
         self.dlf_only_lab: bool = False
         self.dlf_ImgType = tt.bfloat16 # .float32 or .bfloat16
-        self.dlf_device: tt.device = tt.device('cpu')
+        self.dlf_device: tt.device = device_cpu
+        self.SplitBS: int = 0
+        self.SplitZip: tuple = None
         # new: 1 big Tensor
         self.InitVectors()
 
@@ -54,14 +72,14 @@ class DataLdrFast:
 
     @staticmethod
     def CalcDatasetBytes(data:DataLoader) -> tuple[int, int]:
-        "calc number of bytes in DataSet+Labels"
+        "calc number of bytes in DataSet+Labels (unused)"
         if (data is None) or (not isinstance(data, DataLoader)) or (len(data) < 1):
             return 0, 0
         size_img: int = 0
         size_lab: int = 0
         for X, y in data:
-            size_img += tt.numel(X) * X.element_size()
-            size_lab += tt.numel(y) * y.element_size()
+            size_img += X.numel() * X.element_size()
+            size_lab += y.numel() * y.element_size()
         # FastenDataloader(179+468)(29+78)[MB+KB],(235+10).
         return size_img, size_lab
 
@@ -79,8 +97,9 @@ class DataLdrFast:
         n: int = min(cnt, self.dlf_samples)
         if (n < 1): return "-"
         s: str = ""
+        labels: tt.Tensor = self.dlf_Labels
         for i in range(n):
-            s += str( int(self.dlf_Labels[i]) )
+            s += str( int(labels[i]) )
         return s
 
     @staticmethod
@@ -117,24 +136,24 @@ class DataLdrFast:
         return True
 
     def ClearData(self, msg: str = "") -> None:
-        if (len(msg) > 0):
+        if len(msg):
             print("ClearDataset(n=%d,classes=%d):%s" % (self.dlf_samples, self.dlf_label_max+1, msg))
         self.dlf_samples = 0
         # self.dlf_mb_size = 0 # keep gpu-batch-size
         # self.dlf_label_max = -1 # keep classes/labels
         self.dlf_EpochCount = 0
         self.dlf_RandomPos = np.zeros(0, dtype=np.uint16)
-        self.dlf_Labels = tt.zeros([0], dtype=tt.uint8)
-        self.dlf_LastTmp = tt.zeros([0], dtype=tt.get_default_dtype()) # .float32
-        self.dlf_LastLab = tt.zeros([0], dtype=tt.uint8)
+        self.dlf_Labels = zeros([0], dtype=uint8)
+        self.dlf_LastTmp = zeros([0], dtype=get_default_dtype()) # .float32
+        self.dlf_LastLab = zeros([0], dtype=uint8)
 
     def GetDsHash(self, maxidx: int = 0) -> str:
         if (self.dlf_samples < 1): return "<empty_DS>"
         if (maxidx <= 0) or (maxidx > self.dlf_samples): maxidx = self.dlf_samples
-        lab_sum: int = int( tt.sum(self.dlf_Labels[0: maxidx]).item() )
+        lab_sum: int = int( self.dlf_Labels[0: maxidx].sum().item() )
         flat: tt.Tensor = tt.flatten(self.dlf_Images[0: maxidx])
-        pix_xor: int = int( tt.sum(flat.view(tt.int32)).item() ) # .bitwise_xor()
-        pix_sum: float = float( tt.sum(flat).item() )
+        pix_xor: int = int( flat.view(tt.int32).sum().item() ) # .bitwise_xor()
+        pix_sum: float = float( flat.sum().item() )
         return str("[%d/%d]x[%d+%d](%d+%.6g+0x%x)" % (maxidx, self.dlf_samples,
         self.dlf_Labels.element_size(), flat.element_size(), lab_sum, pix_sum, pix_xor))
 
@@ -150,20 +169,20 @@ class DataLdrFast:
         self.dlf_final_fulls = (self.dlf_samples // mbs)
         self.dlf_final_tail  = (self.dlf_samples % mbs)
         self.dlf_shuffle = shuffle
-        img_type: tt.dtype = tt.get_default_dtype() # tt.float32
+        img_type: tt.dtype = get_default_dtype() # tt.float32
         if (self.dlf_final_tail > 0):
             xshape: list[int] = list(self.dlf_Images.shape)
             xshape[0] = mbs # self.dlf_final_tail
-            self.dlf_LastTmp = tt.zeros(xshape, dtype=img_type, device=self.dlf_device)
-            self.dlf_LastLab = tt.zeros([mbs], dtype=tt.uint8, device=self.dlf_device)
+            self.dlf_LastTmp = zeros(xshape, dtype=img_type, device=self.dlf_device)
+            self.dlf_LastLab = zeros([mbs], dtype=uint8, device=self.dlf_device)
             lfp: int = int(self.dlf_final_fulls * mbs)
             t = self.dlf_Images[lfp: self.dlf_samples]
             # print(t.shape, lfp, self.dlf_final_fulls, self.dlf_samples)
             self.dlf_LastTmp[0: self.dlf_final_tail] = t.to(dtype=img_type) # crash
             t = self.dlf_Labels[lfp: self.dlf_samples]
-            self.dlf_LastLab[0: self.dlf_final_tail] = t.to(dtype=tt.uint8)
+            self.dlf_LastLab[0: self.dlf_final_tail] = t.to(dtype=uint8)
         else:
-            self.dlf_LastTmp = tt.zeros([0], dtype=img_type)
+            self.dlf_LastTmp = zeros([0], dtype=img_type)
         if (shuffle):
             mbcnt: int = (self.dlf_samples + 0) // mbs # no_round_up(mbs - 1)
             if (seed != 0): np.random.seed(seed)
@@ -181,12 +200,10 @@ class DataLdrFast:
         return self
 
     def __next__(self): # TODO
-        if self.dlf_pos_ext <= 5:
-            idx: int = self.dlf_pos_ext
-            self.dlf_pos_ext += 1
-            return idx, 100
-        else:
-            raise StopIteration
+        if self.dlf_pos_ext > 5: raise StopIteration
+        idx: int = self.dlf_pos_ext
+        self.dlf_pos_ext += 1
+        return idx, 100
 
     def GetShuffleBatch(self, rewind: bool = False) -> tuple[int, tt.Tensor, tt.Tensor]: # untested
         shuffle: bool = self.dlf_shuffle
@@ -194,7 +211,7 @@ class DataLdrFast:
             # print("GetShuffleBatch.rewind(n=%d)." % self.dlf_samples)
             self.dlf_pos_ext = -1 # rewind
             if (shuffle): # and (len(self.dlf_RandomPos) > 1):
-                assert(len(self.dlf_RandomPos) > 1), "call SetMiniBatchSize() before!"
+                assert self.dlf_RandomPos.numel() > 1, "call SetMiniBatchSize() before!"
                 np.random.shuffle(self.dlf_RandomPos)
             return (-1, None, None)
         elem: int = self.dlf_mb_size # last setting
@@ -204,7 +221,7 @@ class DataLdrFast:
             if (self.dlf_final_tail > 0): # (N%mbs)>0
                 tail: int = self.dlf_final_tail
                 if (shuffle):
-                    rid: int = len(self.dlf_RandomPos) // 4 # 25% of RandomOrder
+                    rid: int = self.dlf_RandomPos.numel() // 4 # 25% of RandomOrder
                     ofs: int = elem * self.dlf_RandomPos[rid]
                 else: # fill-ups still random (even w/o shuffle)
                     ofs: int = elem * np.random.randint(self.dlf_final_fulls)
@@ -220,8 +237,28 @@ class DataLdrFast:
         imgs: tt.Tensor = self.dlf_Images[start_pos: next_pos] # .to(device).to(float32)
         return (elem, imgs, self.dlf_Labels[start_pos: next_pos])
 
+    def DirectBatchRead(self, bs:int) -> tuple[int,zip]:
+        "iterator for eval"
+        if bs < 1:  # release (unblock Images+Labels)
+            self.SplitBS, self.SplitZip = 0, None
+            return 0, None
+
+        if self.SplitBS != bs:
+            assert bs >= 1, "positive batch size"
+            self.SplitBS = bs
+            images, labels = self.dlf_Images, self.dlf_Labels
+            assert images.size(0), "no sample images"
+            assert labels.numel(), "no len(labels)"
+            assert labels.dim() == 1, "only 1D"
+            self.SplitZip = pair = (images.split(bs), labels.split(bs))
+        else:
+            pair = self.SplitZip
+            assert 2 == len(pair), 'zip init tuple'
+
+        return self.dlf_Labels.numel(), zip(pair[0], pair[1])
+
     def DirectBatch(self, elem: int) -> tuple[int, tt.Tensor, tt.Tensor]:
-        "Iterator for 1:1 fast access (no shuffle etc, e.g. test or full batch)"
+        "Iterator for 1:1 fast access (no shuffle etc, e.g. test or full batch) - OLD"
         if (elem < 0) or (self.dlf_pos_fast >= self.dlf_samples):
             # print("DirectBatch.rewind(n=%d)." % self.dlf_samples)
             self.dlf_pos_fast = 0 # rewind
@@ -242,31 +279,32 @@ class DataLdrFast:
     def InfoString(self) -> str:
         est_src: str = "<unknown_DS>"
         cls: int = int(self.dlf_label_max) + 1
-        if (self.dlf_samples < 1): return "<empty_dataset>"
+        dlf_samples:int = self.dlf_samples
+        if (dlf_samples < 1): return "<empty_dataset>"
         lab_str: str = "" if (cls != 10) else self.GetLabelStr(8)
 
         if (cls == 10): # MNIST
             if (self.dlf_sample_elem == (28*28*1)):
-                if (self.dlf_samples == 60000):
+                if (dlf_samples == 60000):
                     if (lab_str == "57131463"): est_src = "MNIST_train"
                     if (lab_str == "33158971"): est_src = "MNIST-Fas._train"
-                if (self.dlf_samples == 10000):
+                if (dlf_samples == 10000):
                     if (lab_str == "72104149"): est_src = "MNIST_test"
                     if (lab_str == "92116146"): est_src = "MNIST-Fas._test"
         if (self.dlf_sample_elem == (32*32*3)):
             if (cls == 10):
-                if (self.dlf_samples == 50000): est_src = "CIFAR-10_train"
-                if (self.dlf_samples == 10000): est_src = "CIFAR-10_test"
+                if (dlf_samples == 50000): est_src = "CIFAR-10_train"
+                if (dlf_samples == 10000): est_src = "CIFAR-10_test"
             if (cls == 100):
-                if (self.dlf_samples == 50000): est_src = "CIFAR-100_train"
-                if (self.dlf_samples == 10000): est_src = "CIFAR-100_test"
+                if (dlf_samples == 50000): est_src = "CIFAR-100_train"
+                if (dlf_samples == 10000): est_src = "CIFAR-100_test"
         if (cls == 196): # CARS
-                if (self.dlf_samples == 8144): est_src = "cars196_train"
-                if (self.dlf_samples == 8041): est_src = "cars196_test"
+                if (dlf_samples == 8144): est_src = "cars196_train"
+                if (dlf_samples == 8041): est_src = "cars196_test"
 
-        if (cls <= 1) or (self.dlf_sample_elem < 2) or (self.dlf_samples < (cls*10)):
+        if (cls <= 1) or (self.dlf_sample_elem < 2) or (dlf_samples < (cls*10)):
             est_src = "bad_dataset" # + test_lab
-        return str("N=%d,E=%d,classes=%d,src=%s" % (self.dlf_samples, self.dlf_sample_elem, cls, est_src))
+        return str("N=%d,E=%d,classes=%d,src=%s" % (dlf_samples, self.dlf_sample_elem, cls, est_src))
 
     def CompatibleDS(self, data) -> bool:
         if (not isinstance(data, type(self))) or (len(self.dlf_samples) < 1): return False
@@ -288,48 +326,46 @@ class DataLdrFast:
         # self.dlf_sample_elem = 0 # numel()
 
     def _dataset2device(self, device) -> None:
-        if (self.dlf_samples < 1):
-            return
+        if (self.dlf_samples < 1): return
         self.dlf_device = device
-        img_type: tt.dtype = tt.get_default_dtype() # tt.float32
-        if (device is tt.device('cpu')):
+        img_type: tt.dtype = get_default_dtype() # tt.float32
+        if (device is device_cpu):
             self.dlf_Images = self.dlf_Images.to(dtype=img_type)
-            self.dlf_Labels = self.dlf_Labels.to(dtype=tt.uint8) # int16 + uint8
+            self.dlf_Labels = self.dlf_Labels.to(dtype=uint8) # int16 + uint8
             return
 
         self.dlf_Images = self.dlf_Images.to(device) # .to(tt.bfloat16)
-        self.dlf_Labels = self.dlf_Labels.to(dtype=tt.uint8).to(device)
+        self.dlf_Labels = self.dlf_Labels.to(dtype=uint8).to(device)
         self.dlf_Images = self.dlf_Images.to(dtype=img_type) # here or at usage (memory vs runtime)
         # print(self.dlf_samples, self.dlf_Images.device, self.dlf_Labels.device); exit()
         # print(self.dlf_samples, self.dlf_Images.dtype, self.dlf_Labels.dtype); exit()
 
-    def ImportFromFile(self, fn: str, device=tt.device('cpu')) -> int:
+    def ImportFromFile(self, fn: str, device=device_cpu) -> int:
         from os.path import isfile
-        if (len(fn) < 2) or (not isfile(fn)):
-            return -1
+        if (len(fn) < 2) or (not isfile(fn)): return -1
         dsnum, self.dlf_Images, self.dlf_Labels = tuple(tt.load(fn, weights_only=True))
-        assert(len(self.dlf_Images) == len(self.dlf_Labels)), "ImageCount <> LabelCount"
+        assert self.dlf_Images.size(0) == self.dlf_Labels.numel(), "ImageCount <> LabelCount"
         self._list2props( dsnum.tolist() )
-        assert(self.dlf_samples == len(self.dlf_Labels)), "SampleCountVar <> LabelCount"
+        assert self.dlf_samples == self.dlf_Labels.numel(), "SampleCountVar <> LabelCount"
         pix_sz: int = self.dlf_Images.element_size()
-        self.dlf_sample_elem = tt.numel(self.dlf_Images[0])
+        self.dlf_sample_elem = self.dlf_Images[0].numel()  # pixel/frame
         i: int = (self.dlf_sample_elem * self.dlf_samples * pix_sz) >> 20 # .bfloat16
         print("DatasetFromCache(n=%d, cls=%d, lab[%s], es=%d+%d, sz=%dMB)." % (self.dlf_samples, self.dlf_label_max+1, self.GetLabelStr(8), pix_sz, self.dlf_Labels.element_size(), i)) # optional
         self._dataset2device(device)
-        return 0 # used RAM [MB]
+        return 0  # used RAM [MB]
 
     def Import_DataLoader(self, data:DataLoader, num_classes:int, is_train:bool=False,\
-            maxMB:int=600, device=tt.device('cpu')) -> int:
-        if (maxMB <= 0) or (not isinstance(data, DataLoader)) or (len(data) < 1):
+            maxMB:int=600, device=device_cpu) -> int:
+        len_data: int = len(data)
+        if (maxMB <= 0) or (not isinstance(data, DataLoader)) or not len_data:
             return -1
         from os.path import isfile
+        from torch import cat
         maxMB = 600 # test
-        dsfn: str = DataLdrFast.CacheFilename(data) + ".pt"
-        dlf_listXY = [] # was self.
-        self.dlf_samples = len(data.dataset) # 60K
+        dsfn: str = ''  # DataLdrFast.CacheFilename(data) + ".pt", now off
+        self.dlf_samples = len(data.dataset)  # 60K
         self.dlf_init_mbs = DataLdrFast.EstimBatchSize(data)
         self.dlf_is_train = is_train
-        i: int = 0
         max_byte:  int = maxMB << 20
         size_byte: int = 0
         max_lab: int = -1 # max(labels)
@@ -338,53 +374,57 @@ class DataLdrFast:
         assert(self.dlf_label_max > 0), "no labels"
         np.random.seed(123) # todo
 
-        if (len(dsfn) > 1) and isfile(dsfn):
+        if (len(dsfn) > 1) and isfile(dsfn):  # Cache = dangerous with validation!
             # max_lab = self.dlf_label_max
             self.ImportFromFile(dsfn, device=device)
             if (self.dlf_samples <= 20000): # (not is_train):
-                maxl: int = -1
-                for _, y in data: maxl = max(maxl, y.max().item())
-                assert(maxl == self.dlf_label_max), "Bad DataLoaderCacheFile! (delete ds_*.tmp.pt)"
-            dsfn = "" # no save after load
-            return 0 # loaded from file cache
+                maxl: int = tt.max( [y.max() for _, y in data] ).item()
+                # for _, y in data: maxl = max(maxl, y.max().item())
+                assert maxl == self.dlf_label_max, "Bad DataLoaderCacheFile! (delete ds_*.tmp.pt)"
+            dsfn = ""  # no save after load
+            return 0  # loaded from file cache
 
         if (self.dlf_samples == 81167) or (self.dlf_samples >= 1200000):
             self.dlf_label_max = 1000 - 1 # detect ImageNet1k
             self.dlf_samples = 0 # mark as unused
             return 0
 
-        dlf_Xsize = tt.zeros([len(data)], dtype=tt.int32)
-        for X, y in data:
-            size_byte += tt.numel(X) * X.element_size() # + tt.numel(y) * y.element_size()
-            # print("X0:", tt.numel(X), X.element_size(), X.size(0), X.shape); exit(0) # X0: 2408448 4(float32) 16(bs) [16, 3, 224, 224]
-            dlf_Xsize[i] = X.size(0); i += 1
+        dlf_listXY = [] # [None] * len_data
+        dlf_Xsize = zeros([len_data], dtype=tt.int32)
+
+        i: int = 0
+        ImgType, int16 = self.dlf_ImgType, tt.int16
+        for i, (X, y) in enumerate(data):  # X0: 2408448 4(float32) 16(bs) [16, 3, 224, 224]
+        # for X, y in data2gen(data, max_byte):
+            size_byte += X.numel() * X.element_size() # + y.numel() * y.element_size()
+            dlf_Xsize[i] = y.numel()
             max_lab = max(max_lab, y.max().item()) # y.dtype==int64
             if (size_byte <= max_byte):
-                y2 = y.to(dtype=tt.int16, copy=True) # int16 + uint8
-                X2 = X.to(dtype=self.dlf_ImgType, copy=True) # optional/halfing
-                dlf_listXY.append( (X2.to(device), y2) )
+                # y2 = y.to(dtype=int16, copy=True) # int16 + uint8
+                X2 = X.to(dtype=ImgType, copy=True) # optional/halfing
+                dlf_listXY.append( (X2, y.clone()) )
             else:
-                if (max_lab < (1<<14)): # 15-bit limit below
-                    dlf_listXY.append( (None, y.to(dtype=tt.int16, copy=True)) )
+                if max_lab < (1<<14): # 15-bit limit below
+                    dlf_listXY.append( (None, y.clone()) ) # to(dtype=int16, copy=True))
                 else:
                     dlf_listXY.append( (None, None) ) # e.g. ImageNet1k (>8 bit)
 
-        assert(self.dlf_label_max == int(max_lab)), "DataLoader not consistent"
-        assert(max_lab > 0), "no labels"
+        assert self.dlf_label_max == int(max_lab), "DataLoader not consistent"
+        assert max_lab > 0, "no labels (classes)"
         # print("Warn: No Labels in Dataset (n=%d, c=%d) !" % (self.dlf_samples, classes))
         if (size_byte > max_byte):
-            print("Warn: %d MB > %d MB, c=%d, skip=%d!" % (size_byte>>20, max_byte>>20, sum(dlf_Xsize), i))
+            print("Warn: %d MB > %d MB, c=%d, skip=%d!" % (size_byte>>20, max_byte>>20, dlf_Xsize.sum(), i))
             if (is_train):
                 self.ClearData()
                 return -5
             else:
                 self.dlf_only_lab = True # only test-data (no shuffle)
 
-        if (len(dlf_listXY) != len(dlf_Xsize)): # Error:IDL(50<>391,i=391)!
-            print("Error:IDL(%d<>%d,i=%d)!" % (len(dlf_listXY), len(dlf_Xsize), i)); exit()
+        if len(dlf_listXY) != dlf_Xsize.numel():  # Error:IDL(50<>391,i=391)!
+            print("Error:IDL(%d<>%d,i=%d)!" % (len(dlf_listXY), dlf_Xsize.numel(), i)); exit()
 
-        self.dlf_sample_elem = tt.numel(X[0])
-        assert(max_lab > 0), "No/empty Labels!"
+        self.dlf_sample_elem = X[0].numel()  # pixel/image
+        assert max_lab > 0, "No/empty Labels!"
         self.dlf_init_mbs = int(dlf_Xsize[0]) # overwrite estimate
         xshape: list[int] = list(X.shape)
         xshape[0] = 0 if (self.dlf_only_lab) else self.dlf_samples
@@ -395,31 +435,23 @@ class DataLdrFast:
             self.dlf_only_lab = False
             return -2
 
-        pos: int = 0
-        self.dlf_Labels = tt.zeros([self.dlf_samples], dtype=tt.int16, device=tt.device('cpu')) # uint8 + int16
+        # self.dlf_Labels = zeros([self.dlf_samples], dtype=int16, device=device_cpu) # uint8 + int16
 
         if (self.dlf_only_lab):
-            for _, y in dlf_listXY:
-                nxt: int = min(self.dlf_samples, pos + len(y))
-                self.dlf_Labels[pos: nxt] = y
-                pos = nxt
+            self.dlf_Labels = cat([y[1] for y in dlf_listXY]).to(dtype=int16)
             print("DLF:only_labels, s=%d, c=%d" % (self.dlf_samples, max_lab+1))
-            self.dlf_Images = tt.zeros(0)
-            self.dlf_Labels = self.dlf_Labels.to(dtype=tt.int16) # caution: model needs 8+64
+            self.dlf_Images = zeros(0)
+            # self.dlf_Labels = self.dlf_Labels.to(dtype=int16) # caution: model needs 8+64
             self.dlf_samples = 0
             return 0
 
-        self.dlf_Images = tt.zeros(xshape, dtype=self.dlf_ImgType) # .bfloat16, [1024,1,8,8]
-        for X, y in dlf_listXY:
-            nxt: int = min(self.dlf_samples, pos + len(y))
-            # if (not self.dlf_only_lab):
-            self.dlf_Images[pos: nxt] = X.to(dtype=self.dlf_ImgType) # .bfloat16
-            self.dlf_Labels[pos: nxt] = y
-            pos = nxt
+        # self.dlf_Images = zeros(xshape, dtype=self.dlf_ImgType) # .bfloat16, [1024,1,8,8]
+        self.dlf_Labels = cat([y[1] for y in dlf_listXY]).to(dtype=uint8)
+        self.dlf_Images = cat([y[0] for y in dlf_listXY]).to(dtype=self.dlf_ImgType)
         del dlf_listXY
-        self.dlf_Labels = self.dlf_Labels.to(dtype=tt.uint8) # int16 issue
+        # self.dlf_Labels = self.dlf_Labels.to(dtype=uint8) # int16 issue
 
-        if (self.dlf_only_lab):
+        if (self.dlf_only_lab):  # unreachable
             self.dlf_mb_size = self.dlf_init_mbs
             self._dataset2device(device)
             print("FromData.OnlyLabel(n=%d, bs=%d, cls=%d, bc=%d)." % (self.dlf_samples, self.dlf_mb_size, self.dlf_label_max+1, i))
@@ -439,9 +471,10 @@ class DataLdrFast:
             return -3
 
         self.SetMiniBatchSize(self.dlf_init_mbs)
-        return size_byte # used RAM [MB]
+        return size_byte  # used RAM [MB]
 
     def FullShuffle(self, seed:int) -> None:
+        "unused"
         if (self.dlf_samples < 2) or (self.dlf_sample_elem < 1): return
         self.dlf_ShuffleCnt += 1
         if not (self.dlf_ShuffleCnt % 2): return # skip epochs
@@ -454,8 +487,8 @@ class DataLdrFast:
         np.random.shuffle(r)
         # ne: int = self.dlf_sample_elem # elem/sample
 
-        src: tt.Tensor = self.dlf_Labels.to(tt.device('cpu')).clone() # e.g. 1x 60 KB
-        lab: tt.Tensor = tt.zeros_like(src) # shuffle labels on CPU
+        src: tt.Tensor = self.dlf_Labels.to(device_cpu).clone() # e.g. 1x 60 KB
+        lab: tt.Tensor = zeros_like(src) # shuffle labels on CPU
         for i in range(blk):
             ofs1, ofs2 = i*glue, r[i] * glue
             lab[ofs1: ofs1+glue] = src[ofs2: ofs2+glue]
