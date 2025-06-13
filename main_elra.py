@@ -800,7 +800,7 @@ def main() -> None:
         # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
 
         run_benchmarks(
-            dataset, testset, #tft,
+            dataset, testset, None, #tft,
             model_class = ResNet18_200 if ((dnet)=="I") else ResNet50_1K,
             model_hyperparams=(),
             optimizers=optimizer,  runs=initializations,
