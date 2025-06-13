@@ -1,6 +1,7 @@
-#Code from https://github.com/DeepVoltaire/AutoAugment
+# Code from https://github.com/DeepVoltaire/AutoAugment
 
 import numpy as np
+from random import randint, random
 from ops import *
 
 
@@ -51,7 +52,7 @@ class ImageNetPolicy(object):
         ]
 
     def __call__(self, img):
-        policy_idx = random.randint(0, len(self.policies) - 1)
+        policy_idx = randint(0, len(self.policies) - 1)
         return self.policies[policy_idx](img)
 
     def __repr__(self):
@@ -105,7 +106,7 @@ class CIFAR10Policy(object):
         ]
 
     def __call__(self, img):
-        policy_idx = random.randint(0, len(self.policies) - 1)
+        policy_idx = randint(0, len(self.policies) - 1)
         return self.policies[policy_idx](img)
 
     def __repr__(self):
@@ -159,7 +160,7 @@ class SVHNPolicy(object):
         ]
 
     def __call__(self, img):
-        policy_idx = random.randint(0, len(self.policies) - 1)
+        policy_idx = randint(0, len(self.policies) - 1)
         return self.policies[policy_idx](img)
 
     def __repr__(self):
@@ -210,8 +211,8 @@ class SubPolicy(object):
         self.magnitude2 = ranges[operation2][magnitude_idx2]
 
     def __call__(self, img):
-        if random.random() < self.p1:
+        if random() < self.p1:
             img = self.operation1(img, self.magnitude1)
-        if random.random() < self.p2:
+        if random() < self.p2:
             img = self.operation2(img, self.magnitude2)
         return img
